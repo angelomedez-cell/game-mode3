@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circuit Master: Electrician's Challenge</title>
+    <!-- Tailwind CSS for UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a202c; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        
+        /* Interactive UI Elements */
+        .interactive { pointer-events: auto; }
+        .hud-text { text-shadow: 2px 2px 0 #000; }
+        
+        /* Animations */
+        @keyframes slideDown { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .scenario-anim { animation: slideDown 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        @keyframes slideUpFade { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .feedback-anim { animation: slideUpFade 0.4s ease-out forwards; }
+
+        @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(250, 204, 21, 0); } 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); } }
+        .highlight-box { animation: pulse-glow 2s infinite; }
+
+        @keyframes stampSlam { 0% { transform: translate(-50%, -50%) scale(3) rotate(-12deg); opacity: 0; } 50% { transform: translate(-50%, -50%) scale(0.8) rotate(-12deg); opacity: 1; } 70% { transform: translate(-50%, -50%) scale(1.1) rotate(-12deg); } 100% { transform: translate(-50%, -50%) scale(1) rotate(-12deg); opacity: 0.9; } }
+        .stamp-animate { animation: stampSlam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+
+        @keyframes popupScore { 0% { transform: translateY(10px) scale(0.5); opacity: 0; } 20% { transform: translateY(0px) scale(1.2); opacity: 1; } 80% { transform: translateY(-20px) scale(1); opacity: 1; } 100% { transform: translateY(-40px) scale(0.8); opacity: 0; } }
+        .cash-popup { animation: popupScore 1.2s ease-out forwards; text-shadow: 0px 2px 4px rgba(0,0,0,0.5); }
+        
+        @keyframes popupDeduction { 
+            0% { transform: translateY(-10px) scale(0.5); opacity: 0; } 
+            20% { transform: translateY(0px) scale(1.2); opacity: 1; } 
+            80% { transform: translateY(20px) scale(1); opacity: 1; } 
+            100% { transform: translateY(40px) scale(0.8); opacity: 0; } 
+        }
+        .deduction-popup { animation: popupDeduction 1.5s ease-out forwards; text-shadow: 0px 1px 2px rgba(0,0,0,0.2); }
+
+        @keyframes popIn { 0% { transform: scale(0); opacity: 0; } 80% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        .pop-reveal { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+
+        /* Confetti */
+        .confetti { position: absolute; width: 10px; height: 10px; background-color: #f00; animation: fall linear forwards; }
+        @keyframes fall { to { transform: translateY(100vh) rotate(720deg); } }
+
+        /* Custom Scrollbar */
+        .custom-scroll::-webkit-scrollbar { width: 8px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- Confetti Container -->
+    <div id="confetti-container" class="absolute inset-0 pointer-events-none z-[60] overflow-hidden"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer" class="flex flex-col justify-between">
+        
+        <!-- TOP AREA -->
+        <div class="w-full p-2 md:p-4 flex flex-col items-center gap-2 md:gap-4 pointer-events-none">
+            
+            <!-- HUD Stats -->
+            <div class="flex justify-between w-full max-w-6xl z-20 pointer-events-none">
+                <div id="earnings-container" class="relative bg-gray-900 bg-opacity-80 text-white px-6 py-3 rounded-lg border-2 border-green-500 shadow-lg flex gap-4 min-w-[200px]">
+                    <span class="text-green-400 uppercase text-xs tracking-wider self-center font-bold">Total Earnings</span>
+                    <span id="score-display" class="text-3xl font-black text-white">₱0</span>
+                </div>
+                <div class="flex gap-2">
+                    <button id="music-toggle" class="interactive bg-gray-900 bg-opacity-80 text-white px-3 py-2 rounded-lg border-2 border-gray-600 shadow-lg hover:bg-gray-700">
+                        🔊
+                    </button>
+                    <div class="bg-gray-900 bg-opacity-80 text-white px-6 py-3 rounded-lg border-2 border-blue-500 shadow-lg flex gap-4">
+                        <span class="text-blue-400 uppercase text-xs tracking-wider self-center font-bold">Progress</span>
+                        <span id="level-display" class="text-2xl font-bold">Day 1</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stage 1 Mission Display -->
+            <div id="mission-display" class="mt-4 bg-blue-600 bg-opacity-90 text-white px-6 py-4 rounded-xl border-4 border-blue-400 shadow-xl transition-all duration-300 flex flex-col md:flex-row items-center gap-6 max-w-4xl">
+                <div class="flex-1 text-center md:text-left">
+                    <div class="text-xs uppercase font-bold text-blue-200 mb-1">Training Mode</div>
+                    <div id="instruction-text" class="text-3xl font-black hud-text leading-tight">Loading...</div>
+                </div>
+                <div id="training-definition" class="bg-blue-800 bg-opacity-80 p-3 rounded-lg border-l-4 border-yellow-400 text-sm md:text-base text-blue-100 max-w-md shadow-inner"></div>
+            </div>
+
+            <!-- Stage 2 Scenario Panel -->
+            <div id="scenario-panel" class="hidden w-full max-w-3xl interactive scenario-anim mt-2 pointer-events-auto relative">
+                <div class="bg-white rounded-xl shadow-2xl overflow-hidden border-4 border-yellow-500 flex flex-row relative">
+                    <div class="bg-blue-50 w-24 md:w-32 flex-shrink-0 flex flex-col items-center justify-center p-2 border-r border-gray-200">
+                        <div id="requester-face" class="text-4xl md:text-6xl mb-1 drop-shadow-md">👨</div>
+                        <div id="requester-name" class="text-xs md:text-sm font-bold text-gray-700 text-center leading-tight">Name</div>
+                    </div>
+                    <div class="flex-1 p-3 md:p-5 flex flex-col justify-center bg-gradient-to-r from-white to-gray-50">
+                        <div id="job-header" class="flex items-center gap-2 mb-2 relative">
+                            <span id="job-icon" class="text-2xl">🏖️</span>
+                            <h3 id="job-title" class="text-blue-700 font-black text-lg md:text-xl uppercase tracking-tight">Job Title</h3>
+                            <span id="pay-display" class="ml-auto bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded border border-green-200 transition-colors duration-300">Pay: ₱750</span>
+                        </div>
+                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-2 md:p-3 rounded-r">
+                            <p id="scenario-prompt" class="text-gray-800 text-base md:text-lg font-medium leading-snug">
+                                "Prompt text goes here..."
+                            </p>
+                        </div>
+                    </div>
+                    <div id="done-stamp" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 border-8 border-green-600 text-green-600 font-black text-6xl md:text-8xl px-8 py-2 rounded-xl -rotate-12 z-50 pointer-events-none select-none mix-blend-multiply tracking-widest" style="text-shadow: 1px 1px 0 rgba(22,163,74,0.2);">PAID</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification Area -->
+        <div id="message-area" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center w-full pointer-events-none z-30"></div>
+        
+        <!-- BOTTOM AREA -->
+        <div id="feedback-panel" class="hidden w-full flex justify-center pb-4 md:pb-8 z-40 feedback-anim pointer-events-none absolute bottom-0 left-0 right-0">
+            <div id="feedback-content" class="interactive bg-gray-900 bg-opacity-95 text-white p-4 rounded-xl border-l-8 border-red-500 shadow-2xl max-w-3xl mx-4 transition-colors duration-300">
+                <div class="flex items-start gap-4">
+                    <div id="feedback-icon" class="text-4xl animate-pulse">💡</div>
+                    <div class="flex-1">
+                        <h4 id="feedback-title" class="font-bold text-red-300 text-sm uppercase tracking-wider mb-1">Practical Tip</h4>
+                        <p id="feedback-text" class="text-lg md:text-xl font-medium leading-snug">Explanation text...</p>
+                        <div id="feedback-btn-container" class="mt-4 flex justify-end hidden border-t border-gray-700 pt-3">
+                            <button id="next-level-btn" class="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105 flex items-center gap-2">
+                                <span>NEXT DAY</span> <span>➡️</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start/End Screen (Scrollable) -->
+        <div id="overlay-screen" class="absolute inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center interactive z-50 p-4 overflow-y-auto custom-scroll">
+            <div id="overlay-content" class="flex flex-col items-center max-w-4xl w-full">
+                <!-- Initial content will be Start Screen, replaced by JS for End Screen -->
+                <h1 id="game-title" class="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 mb-4 text-center px-4 filter drop-shadow-lg leading-tight">CIRCUIT MASTER</h1>
+                <div id="game-subtitle" class="text-center w-full">
+                    <p class="text-gray-300 text-lg md:text-xl mb-8 leading-relaxed max-w-2xl mx-auto">
+                        <strong class="text-white text-2xl block mb-4">You are starting on your job as an Electrical Engineer!</strong>
+                        But first, you must complete your initial training to prove your skills.
+                    </p>
+                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 inline-block text-left mx-auto">
+                        <div class="flex items-center gap-4 mb-2">
+                            <span class="text-blue-400 font-bold text-xl">Level 1-2:</span>
+                            <span class="text-white">Training Mode (Unpaid Internship)</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="text-yellow-400 font-bold text-xl">Days 1-20:</span>
+                            <span class="text-white">Job Requests (Earn Salary & Donate)</span>
+                        </div>
+                    </div>
+                </div>
+                <button id="action-btn" class="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-8 md:py-4 md:px-12 rounded-full text-xl md:text-2xl shadow-[0_6px_0_rgb(21,128,61)] active:translate-y-1 active:shadow-none transition-all border-2 border-green-400 mt-8">
+                    START TRAINING 🔊
+                </button>
+            </div>
+        </div>
+
+        <!-- Transition Screen -->
+        <div id="transition-screen" class="hidden absolute inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center interactive z-50 p-4">
+            <div class="max-w-2xl w-full flex flex-col items-center">
+                <h2 class="text-4xl md:text-5xl font-black text-white mb-6 text-center tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 leading-tight">TRAINING COMPLETE!</h2>
+                <div class="text-6xl md:text-8xl mb-6 animate-bounce">🎓</div>
+                <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-full text-center border-2 border-gray-700 shadow-2xl">
+                    <p class="text-lg md:text-xl text-gray-300 mb-6 leading-relaxed">Congratulations! You have mastered the basics.</p>
+                    <p class="text-xl md:text-2xl text-white font-bold mb-8">You are now ready to take on <span class="text-yellow-400">Real Job Requests</span>.<br><span class="text-green-400 text-2xl md:text-3xl block mt-2">Rate: ₱750 / Job</span></p>
+                    <button id="start-job-btn" class="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 px-8 md:py-4 md:px-12 rounded-full text-xl md:text-2xl shadow-lg transition-all transform hover:scale-105 border-b-4 border-yellow-700 active:border-b-0 active:translate-y-1">START DAY 1 🚀</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const scenarios = [
+            { title: "Batangas Resort", name: "Mang Pandoy", face: "👨🏽", icon: "🏖️", target: 'parallel', prompt: "Good day! I need help with my resort cottages. If one bulb burns out, the others must stay lit for the guests!", feedback: "For resorts, use <strong>PARALLEL</strong> circuits. This ensures that if one cottage loses power, the others are not left in the dark." },
+            { title: "Pinoy Christmas", name: "Lolo Tasyo", face: "🎅", icon: "🎄", target: 'series', prompt: "I'm making cheap Christmas lights. I want to save on wire! Just one line for all lights. If one breaks, they all go out, but it's cheap!", feedback: "Cheap Christmas lights often use <strong>SERIES</strong> circuits. It saves wire, but remember: if one bulb blows, the whole chain goes dark!" },
+            { title: "City Streetlights", name: "Mayor Vico", face: "👨‍💼", icon: "🏙️", target: 'parallel', prompt: "For the new road project, the whole street cannot go dark just because one lamp breaks. Each post must be independent.", feedback: "Streetlights always use <strong>PARALLEL</strong> wiring. This ensures the road stays lit even if one lamp fails." },
+            { title: "Brownout Flashlight", name: "Kuya Bong", face: "👴", icon: "🔦", target: 'series', prompt: "Brownouts happen often! I'm making a simple flashlight. Just a battery, switch, and bulb in a straight connection.", feedback: "Flashlights typically use a <strong>SERIES</strong> circuit. It is the simplest way to connect the battery, switch, and light bulb." },
+            { title: "Public School Lab", name: "Ms. Santos", face: "👩‍🏫", icon: "💻", target: 'parallel', prompt: "In our computer lab, everything needs to be plugged in. If a student unplugs their PC, the others must stay on!", feedback: "Offices and schools use <strong>PARALLEL</strong> outlets. This way, unplugging one computer doesn't shut down the whole class." },
+            { title: "Carnival Ride", name: "Manong Guard", face: "👮", icon: "🎢", target: 'series', prompt: "The roller coaster has 5 seatbelt sensors. If even one seatbelt is not buckled (open circuit), the whole ride must stop immediately!", feedback: "Safety systems use <strong>SERIES</strong> circuits. If any connection breaks (like an unbuckled belt), the machine stops instantly." },
+            { title: "Noche Buena Prep", name: "Nanay Belen", face: "👩", icon: "🍳", target: 'parallel', prompt: "I'm cooking for Noche Buena. I don't want the fridge to turn off just because I turned off the oven toaster! They must be separate.", feedback: "Household wiring is <strong>PARALLEL</strong>. This allows you to turn off the toaster without killing power to the refrigerator!" },
+            { title: "Barangay Security", name: "Tanod Berto", face: "👮", icon: "🚨", target: 'series', prompt: "We are installing window alarms. If a thief cuts even one wire on the window, the alarm must sound immediately!", feedback: "Perimeter alarms use <strong>SERIES</strong> loops. If a thief cuts the wire, the circuit breaks and triggers the alarm." },
+            { title: "Jeepney Headlights", name: "Mang Cardo", face: "👨‍🔧", icon: "🚙", target: 'parallel', prompt: "I'm fixing the jeepney headlights. If the left light burns out at night, the right one must stay on for safety.", feedback: "Vehicle lights use <strong>PARALLEL</strong> wiring. This ensures the driver can still see the road even if one headlight dies." },
+            { title: "TV Remote", name: "Kuya Jhun", face: "🤓", icon: "📺", target: 'series', prompt: "I want to watch the basketball game but the battery is weak. I need to connect two 1.5V batteries to make 3V so the remote works!", feedback: "Remote batteries are connected in <strong>SERIES</strong>. This combines the voltage of each battery to power the device." },
+            { title: "Ancestral House", name: "Donya Imelda", face: "👸", icon: "💎", target: 'parallel', prompt: "I have a grand chandelier in the living room with 50 bulbs. It would be embarrassing if one bulb died and the whole thing went dark!", feedback: "Chandeliers use <strong>PARALLEL</strong> wiring. This ensures the fixture stays bright and beautiful even if a few bulbs burn out." },
+            { title: "Old House Fuse", name: "Lolo Peping", face: "👴🏼", icon: "⚡", target: 'series', prompt: "In our old house in Vigan, we have a fuse on the main switch. If it overheats, the fuse blows and cuts ALL power to prevent fire.", feedback: "Fuses are connected in <strong>SERIES</strong> with the main line. They act as a safety choke-point to cut all power during an overload." },
+            { title: "Mall Signage", name: "Ate Grace", face: "👩‍💼", icon: "🏪", target: 'parallel', prompt: "Our shop sign says 'OPEN'. If the letter 'O' burns out, the 'PEN' part must still light up so customers can see us!", feedback: "Commercial signs use <strong>PARALLEL</strong> wiring. Even if one letter fails, the shop remains visible to customers." },
+            { title: "Electric Fan Repair", name: "Mang Boy", face: "👨‍🔧", icon: "🌀", target: 'series', prompt: "I'm fixing the electric fan. I will connect the switch directly to the motor. Switch on, motor spins.", feedback: "Control switches are connected in <strong>SERIES</strong> with the motor. This allows direct control of the electric flow to the fan." },
+            { title: "Barangay Court", name: "Coach Tim", face: "⛹️‍♂️", icon: "🏀", target: 'parallel', prompt: "In the covered court, there are four big lights. We should be able to fix one without turning off the others so the game can continue!", feedback: "Court lights use <strong>PARALLEL</strong> circuits. Maintenance can repair one light while the game continues under the others." },
+            { title: "Parol Contest", name: "Mang Ben", face: "👨🏽‍🦳", icon: "🌟", target: 'parallel', prompt: "I'm joining the Giant Lantern Festival! If one bulb fails, the rest of the star pattern must stay lit so I can win.", feedback: "Giant Parols use <strong>PARALLEL</strong> wiring. This ensures the intricate star patterns remain visible even if individual bulbs fail." },
+            { title: "Jeepney Passenger", name: "Kuya Jobert", face: "👨🏽", icon: "🛣️", target: 'parallel', prompt: "It's dark inside my jeepney. If the light near me breaks, the back light must stay on so passengers can pay their fare!", feedback: "Public transport needs reliability. <strong>PARALLEL</strong> wiring ensures passengers aren't left in the dark if the front light breaks." },
+            { title: "Sari-Sari Store", name: "Aling Nena", face: "👵", icon: "🏪", target: 'parallel', prompt: "Electricity is expensive! I want to turn off the TV when no one is watching, but keep the refrigerator running for the ice candy.", feedback: "Businesses use <strong>PARALLEL</strong> circuits. Aling Nena can save money by turning off the TV while keeping the fridge running." },
+            { title: "Fiesta Banderitas", name: "Kapitan Tiyago", face: "👮‍♂️", icon: "🚩", target: 'series', prompt: "We are putting up string lights for the plaza. Just use a single long wire for everything to save money. If one breaks, we'll fix it later.", feedback: "Temporary fiesta decorations often use <strong>SERIES</strong> strings because they are cheap and easy to hang, even if less reliable." },
+            { title: "Science Project", name: "Nene", face: "👧", icon: "🔋", target: 'series', prompt: "I'm making a project. My battery voltage is too low. I will connect three batteries in a line to make the power stronger!", feedback: "To increase voltage, batteries are connected in <strong>SERIES</strong>. This combines their power to run larger devices." }
+        ];
+
+        const state = { score: 0, level: 1, maxLevels: 22, targetType: 'series', stage: 1, isPlaying: false, canInteract: false, objects: [], isMuted: false, salaryPerJob: 750, mistakeMade: false };
+        let audioCtx = null, musicGain = null, isMusicPlaying = false;
+
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+        function toggleMute() { state.isMuted = !state.isMuted; const btn = document.getElementById('music-toggle'); if (state.isMuted) { btn.innerText = '🔇'; if(musicGain) musicGain.gain.setValueAtTime(0, audioCtx.currentTime); } else { btn.innerText = '🔊'; if(musicGain) musicGain.gain.setValueAtTime(0.05, audioCtx.currentTime); } }
+        document.getElementById('music-toggle').addEventListener('click', toggleMute);
+
+        function playBackgroundMusic() {
+            if (isMusicPlaying || !audioCtx) return;
+            isMusicPlaying = true;
+            const notes = [392.00, 329.63, 261.63, 329.63, 392.00, 329.63, 261.63, 329.63, 440.00, 349.23, 261.63, 349.23, 440.00, 349.23, 293.66, 392.00];
+            let noteIndex = 0; const tempo = 0.4;
+            musicGain = audioCtx.createGain(); musicGain.gain.value = state.isMuted ? 0 : 0.05; musicGain.connect(audioCtx.destination);
+            function playNextNote() {
+                if (!isMusicPlaying) return;
+                const osc = audioCtx.createOscillator(); osc.type = 'triangle'; osc.frequency.setValueAtTime(notes[noteIndex], audioCtx.currentTime);
+                const now = audioCtx.currentTime; const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0, now); gain.gain.linearRampToValueAtTime(1, now + 0.05); gain.gain.linearRampToValueAtTime(0, now + tempo - 0.05);
+                osc.connect(gain); gain.connect(musicGain); osc.start(now); osc.stop(now + tempo);
+                noteIndex = (noteIndex + 1) % notes.length; setTimeout(playNextNote, tempo * 1000);
+            }
+            playNextNote();
+        }
+
+        function playSound(type) {
+            if (state.isMuted || !audioCtx) return;
+            const osc = audioCtx.createOscillator(); const g = audioCtx.createGain(); osc.connect(g); g.connect(audioCtx.destination); const now = audioCtx.currentTime;
+            if (type === 'success') { osc.type = 'sine'; osc.frequency.setValueAtTime(500, now); osc.frequency.exponentialRampToValueAtTime(1000, now + 0.1); g.gain.setValueAtTime(0.2, now); g.gain.exponentialRampToValueAtTime(0.01, now + 0.3); osc.start(now); osc.stop(now + 0.3); }
+            else if (type === 'fail') { osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now); osc.frequency.linearRampToValueAtTime(100, now + 0.2); g.gain.setValueAtTime(0.2, now); g.gain.exponentialRampToValueAtTime(0.01, now + 0.2); osc.start(now); osc.stop(now + 0.2); }
+            else if (type === 'pop') { osc.type = 'triangle'; osc.frequency.setValueAtTime(200, now); osc.frequency.exponentialRampToValueAtTime(600, now + 0.1); g.gain.setValueAtTime(0.1, now); g.gain.exponentialRampToValueAtTime(0.01, now + 0.1); osc.start(now); osc.stop(now + 0.1); }
+            else if (type === 'stamp') { osc.type = 'square'; osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(40, now + 0.15); g.gain.setValueAtTime(0.3, now); g.gain.exponentialRampToValueAtTime(0.01, now + 0.15); osc.start(now); osc.stop(now + 0.2); }
+            else if (type === 'ching') { osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(2000, now + 0.1); g.gain.setValueAtTime(0.3, now); g.gain.exponentialRampToValueAtTime(0.01, now + 0.3); osc.start(now); osc.stop(now + 0.3); }
+        }
+
+        // New function to play specific frequency notes for the street lighting animation
+        function playNote(freq) {
+            if (state.isMuted || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            osc.connect(g);
+            g.connect(audioCtx.destination);
+            g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.5);
+        }
+
+        // Confetti Function
+        function fireConfetti() {
+            const container = document.getElementById('confetti-container');
+            const colors = ['#ff0', '#f00', '#0f0', '#00f', '#0ff', '#f0f'];
+            for(let i=0; i<100; i++) {
+                const el = document.createElement('div');
+                el.className = 'confetti';
+                el.style.left = Math.random() * 100 + 'vw';
+                el.style.backgroundColor = colors[Math.floor(Math.random()*colors.length)];
+                el.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                el.style.width = (Math.random() * 10 + 5) + 'px';
+                el.style.height = (Math.random() * 10 + 5) + 'px';
+                container.appendChild(el);
+            }
+        }
+
+        // Three.js
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1a202c); scene.fog = new THREE.Fog(0x1a202c, 10, 40);
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight); renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.9); dirLight.position.set(5, 10, 7); dirLight.castShadow = true; scene.add(dirLight);
+
+        // Materials & Generators
+        const matBatteryBody = new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 0.3, metalness: 0.2 });
+        const matBatteryCap = new THREE.MeshStandardMaterial({ color: 0x111111 });
+        const matWire = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 }); 
+        const matBase = new THREE.MeshStandardMaterial({ color: 0x9ca3af, metalness: 0.8 });
+        const matBulbOff = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, shininess: 100 });
+        const matSwitchBase = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const matSwitchLever = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+
+        function createBattery() { const g = new THREE.Group(); const b = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5, 32), matBatteryBody); b.castShadow = true; g.add(b); const c = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.2, 16), matBatteryCap); c.position.y = 0.85; g.add(c); return g; }
+        function createBulb() { const g = new THREE.Group(); const b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.5, 16), matBase); g.add(b); const l = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 32), matBulbOff.clone()); l.position.y = 0.6; l.userData.isGlass = true; g.add(l); return g; }
+        function createSwitch() { const g = new THREE.Group(); const b = new THREE.Mesh(new THREE.BoxGeometry(1, 0.2, 0.6), matSwitchBase); g.add(b); const h = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), matSwitchBase); h.position.y = 0.2; g.add(h); const l = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.1), matSwitchLever); l.position.y = 0.4; l.rotation.z = Math.PI / 6; g.add(l); return g; }
+        function createWire(s, e, c=0xef4444) { const p = new THREE.LineCurve3(s, e); const t = new THREE.TubeGeometry(p, 1, 0.08, 8, false); const m = matWire.clone(); m.color.setHex(c); return new THREE.Mesh(t, m); }
+
+        function createSeriesCircuit(v=0) {
+            const g = new THREE.Group(); g.userData.type = 'series';
+            const w = 2 + Math.random() * 2; const h = 2 + Math.random() * 1.5; const c = Math.random() > 0.5 ? 0xef4444 : 0x3b82f6;
+            const bat = createBattery(); bat.rotation.z = Math.PI / 2; bat.position.set(0, -h/2, 0); g.add(bat);
+            const cnt = v > 0.5 ? 3 : 2; const by = h/2; const bulbs = [];
+            for(let i=0; i<cnt; i++) { const b = createBulb(); b.position.set((w/2) - ((w)/(cnt+1)) * (i+1), by, 0); g.add(b); bulbs.push(b); }
+            const sw = createSwitch(); sw.position.set(w/2, 0, 0); sw.rotation.z = Math.PI / 2; g.add(sw);
+            g.add(createWire(new THREE.Vector3(0.75, -h/2, 0), new THREE.Vector3(w/2, -h/2, 0), c)); g.add(createWire(new THREE.Vector3(w/2, -h/2, 0), new THREE.Vector3(w/2, -0.5, 0), c)); g.add(createWire(new THREE.Vector3(w/2, 0.5, 0), new THREE.Vector3(w/2, by, 0), c)); g.add(createWire(new THREE.Vector3(w/2, by, 0), bulbs[0].position, c));
+            for(let i=0; i<cnt-1; i++) g.add(createWire(bulbs[i].position, bulbs[i+1].position, c));
+            g.add(createWire(bulbs[cnt-1].position, new THREE.Vector3(-w/2, by, 0), c)); g.add(createWire(new THREE.Vector3(-w/2, by, 0), new THREE.Vector3(-w/2, -h/2, 0), c)); g.add(createWire(new THREE.Vector3(-w/2, -h/2, 0), new THREE.Vector3(-0.75, -h/2, 0), c));
+            const hb = new THREE.Mesh(new THREE.BoxGeometry(w+2, h+2, 2), new THREE.MeshBasicMaterial({ visible: false })); hb.userData.parentGroup = g; g.add(hb);
+            return g;
+        }
+
+        function createParallelCircuit(v=0) {
+            const g = new THREE.Group(); g.userData.type = 'parallel';
+            const w = 1.8 + Math.random() * 1.5; const c = Math.random() > 0.5 ? 0x22c55e : 0xeab308;
+            const bat = createBattery(); bat.rotation.z = Math.PI / 2; bat.position.set(0, -2, 0); g.add(bat);
+            const sw = createSwitch(); sw.position.set(1.5, -2, 0); g.add(sw);
+            const cnt = v > 0.5 ? 3 : 2; const sy = -0.5; const gap = 1.5; const ty = sy + ((cnt-1) * gap);
+            for(let i=0; i<cnt; i++) { const y = sy + (i * gap); const b = createBulb(); b.position.set(0, y, 0); g.add(b); g.add(createWire(new THREE.Vector3(-w, y, 0), new THREE.Vector3(-0.3, y, 0), c)); g.add(createWire(new THREE.Vector3(0.3, y, 0), new THREE.Vector3(w, y, 0), c)); }
+            g.add(createWire(new THREE.Vector3(w, -2, 0), new THREE.Vector3(w, ty, 0), c)); g.add(createWire(new THREE.Vector3(-w, -2, 0), new THREE.Vector3(-w, ty, 0), c)); g.add(createWire(new THREE.Vector3(0.75, -2, 0), new THREE.Vector3(1, -2, 0), c)); g.add(createWire(new THREE.Vector3(2, -2, 0), new THREE.Vector3(w, -2, 0), c)); g.add(createWire(new THREE.Vector3(-0.75, -2, 0), new THREE.Vector3(-w, -2, 0), c));
+            const hb = new THREE.Mesh(new THREE.BoxGeometry(w*2.5, ty-(-2)+2, 2), new THREE.MeshBasicMaterial({ visible: false })); hb.position.y = (ty - 2) / 2; hb.userData.parentGroup = g; g.add(hb);
+            return g;
+        }
+
+        const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+        function onMouseClick(event) {
+            if (!state.isPlaying || !state.canInteract) return;
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1; mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObjects(scene.children, true);
+            if (intersects.length > 0) { let g = intersects[0].object; while(g && !g.userData.type) g = g.parent; if (g) handleSelection(g); }
+        }
+
+        function showSalaryPopup(amount) {
+            const container = document.getElementById('earnings-container'); const popup = document.createElement('div');
+            popup.innerText = "+₱" + amount; popup.className = "cash-popup absolute top-2 -right-4 md:-right-32 text-green-400 font-black text-2xl md:text-4xl select-none z-50 pointer-events-none bg-gray-900 bg-opacity-80 px-2 rounded-md border border-green-500";
+            container.appendChild(popup); playSound('ching'); setTimeout(() => popup.remove(), 1200);
+        }
+
+        function showDeductionPopup() {
+            const container = document.getElementById('job-header'); // Position relative to job header in scenario panel
+            const popup = document.createElement('div');
+            popup.innerText = "-₱250"; 
+            // Positioned near the Pay badge
+            popup.className = "deduction-popup absolute -top-8 right-0 text-red-500 font-black text-3xl select-none z-50 pointer-events-none stroke-black";
+            popup.style.webkitTextStroke = "1px white";
+            
+            container.appendChild(popup);
+            // No specific sound for deduction itself, just fail sound, but we can add one if needed.
+            // Removing after animation
+            setTimeout(() => {
+                popup.remove();
+            }, 1500);
+        }
+
+        function updatePayDisplay(amount) {
+            const display = document.getElementById('pay-display');
+            display.innerText = `Pay: ₱${amount}`;
+            display.classList.remove('bg-green-100', 'text-green-800', 'border-green-200');
+            display.classList.add('bg-red-100', 'text-red-800', 'border-red-200', 'shake'); // Add shake or red style
+            setTimeout(() => display.classList.remove('shake'), 500);
+        }
+
+        function handleSelection(selectedGroup) {
+            state.canInteract = false; const isCorrect = selectedGroup.userData.type === state.targetType;
+            if (isCorrect) {
+                document.getElementById('feedback-panel').classList.add('hidden'); playSound('success'); showFeedback("Correct!", "text-green-400");
+                if (state.level > 2) { const pay = state.mistakeMade ? 500 : state.salaryPerJob; state.score += pay; showSalaryPopup(pay); }
+                lightUpCircuit(selectedGroup);
+                if (state.level > 2) { const stamp = document.getElementById('done-stamp'); stamp.classList.remove('hidden'); stamp.classList.add('stamp-animate'); playSound('stamp'); }
+                animateSuccess(selectedGroup, () => showLearningTip(true));
+            } else {
+                playSound('fail'); showFeedback("Oops!", "text-red-400"); 
+                
+                // Logic for penalty
+                if (!state.mistakeMade && state.level > 2) {
+                    state.mistakeMade = true;
+                    updatePayDisplay(500);
+                    showDeductionPopup();
+                }
+
+                showLearningTip(false); animateShake(selectedGroup, () => state.canInteract = true);
+            }
+            updateHUD();
+        }
+
+        function showLearningTip(isSuccess) {
+            const panel = document.getElementById('feedback-panel'); const content = document.getElementById('feedback-content'); const title = document.getElementById('feedback-title'); const text = document.getElementById('feedback-text'); const icon = document.getElementById('feedback-icon'); const btnContainer = document.getElementById('feedback-btn-container');
+            content.classList.remove('border-red-500', 'border-green-500'); title.classList.remove('text-red-300', 'text-green-300');
+            let message = "";
+            if (state.level <= 2) {
+                if (state.targetType === 'series') message = "The answer is <strong>SERIES</strong>. Look for a <strong>single wire loop</strong> where electricity flows through one bulb to get to the next.";
+                else message = "The answer is <strong>PARALLEL</strong>. Look for a <strong>ladder shape</strong> where each bulb has its own separate path.";
+            } else { const idx = state.level - 3; const data = scenarios[idx]; message = data.feedback; }
+            if (isSuccess) { content.classList.add('border-green-500'); title.classList.add('text-green-300'); title.innerText = "GREAT JOB!"; icon.innerText = "🎉"; text.innerHTML = "<strong>Correct!</strong> " + message; btnContainer.classList.remove('hidden'); }
+            else { content.classList.add('border-red-500'); title.classList.add('text-red-300'); title.innerText = "PRACTICAL TIP"; icon.innerText = "💡"; text.innerHTML = message; btnContainer.classList.add('hidden'); }
+            panel.classList.remove('hidden');
+        }
+
+        function lightUpCircuit(group) {
+            group.traverse((child) => { if (child.userData.isGlass) { child.material = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 2, transparent: true, opacity: 0.9 }); const light = new THREE.PointLight(0xffff00, 1, 5); light.position.copy(child.getWorldPosition(new THREE.Vector3())); scene.add(light); if(!group.userData.lights) group.userData.lights = []; group.userData.lights.push(light); } });
+        }
+
+        function showFeedback(text, color) {
+            const div = document.createElement('div'); div.className = `text-6xl font-black ${color} drop-shadow-2xl animate-bounce tracking-wide stroke-black`; div.style.webkitTextStroke = "2px black"; div.innerText = text;
+            const area = document.getElementById('message-area'); area.innerHTML = ''; area.appendChild(div); setTimeout(() => div.remove(), 1200);
+        }
+
+        function animateSuccess(group, cb) { let r = 0; const loop = () => { group.rotation.y += 0.2; r += 0.2; if(r < Math.PI*2) requestAnimationFrame(loop); else { group.rotation.y = group.userData.origRot || 0; setTimeout(cb, 500); } }; loop(); }
+        function animateShake(group, cb) { const startX = group.position.x; let start = null; const loop = (t) => { if(!start) start=t; if(t-start < 400) { group.position.x = startX + Math.sin((t-start)*0.1)*0.2; requestAnimationFrame(loop); } else { group.position.x = startX; cb(); } }; requestAnimationFrame(loop); }
+
+        function startGame() { initAudio(); playBackgroundMusic(); document.getElementById('overlay-screen').style.display = 'none'; state.isPlaying = true; state.score = 0; state.level = 1; loadLevel(); }
+        function nextLevel() {
+            state.level++; document.getElementById('feedback-panel').classList.add('hidden');
+            const stamp = document.getElementById('done-stamp'); stamp.classList.add('hidden'); stamp.classList.remove('stamp-animate');
+            if (state.level === 3) { showTransitionScreen(); return; }
+            if (state.level > state.maxLevels) { gameOver(); } else { updateHUD(); loadLevel(); }
+        }
+
+        function showTransitionScreen() {
+            state.objects.forEach(o => { if(o.userData.lights) o.userData.lights.forEach(l => scene.remove(l)); scene.remove(o); }); state.objects = [];
+            document.getElementById('transition-screen').style.display = 'flex';
+        }
+
+        function loadLevel() {
+            state.objects.forEach(o => { if(o.userData.lights) o.userData.lights.forEach(l => scene.remove(l)); scene.remove(o); }); state.objects = []; state.mistakeMade = false;
+            const missionDisplay = document.getElementById('mission-display'); const scenarioPanel = document.getElementById('scenario-panel');
+            if (state.level <= 2) {
+                missionDisplay.classList.remove('hidden'); missionDisplay.style.display = 'flex'; scenarioPanel.classList.add('hidden'); const defBox = document.getElementById('training-definition');
+                if (state.level === 1) { state.targetType = 'series'; document.getElementById('instruction-text').innerText = "Find the SERIES Circuit"; document.getElementById('instruction-text').className = "text-3xl font-black hud-text text-center text-red-200"; defBox.innerHTML = "<strong class='text-yellow-300 block mb-1'>DEFINITION:</strong>Series circuits have a <span class='text-white font-bold'>single path</span> for electricity.<br>If one bulb fails, <em class='text-red-300'>all lights go out</em>."; }
+                else { state.targetType = 'parallel'; document.getElementById('instruction-text').innerText = "Find the PARALLEL Circuit"; document.getElementById('instruction-text').className = "text-3xl font-black hud-text text-center text-green-200"; defBox.innerHTML = "<strong class='text-yellow-300 block mb-1'>DEFINITION:</strong>Parallel circuits have <span class='text-white font-bold'>multiple paths</span> (like a ladder).<br>If one bulb fails, others <em class='text-green-300'>stay on</em>."; }
+            } else {
+                missionDisplay.style.display = 'none'; scenarioPanel.classList.remove('hidden');
+                
+                // Reset Pay Display style for new level
+                const payDisplay = document.getElementById('pay-display');
+                payDisplay.innerText = "Pay: ₱750";
+                payDisplay.className = "ml-auto bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded border border-green-200 transition-colors duration-300";
+
+                const idx = state.level - 3; const data = scenarios[idx]; state.targetType = data.target;
+                document.getElementById('requester-face').innerText = data.face; document.getElementById('requester-name').innerText = data.name; document.getElementById('job-title').innerText = data.title; document.getElementById('job-icon').innerText = data.icon; document.getElementById('scenario-prompt').innerText = `"${data.prompt}"`;
+            }
+            const leftObj = createSeriesCircuit(Math.random()); const rightObj = createParallelCircuit(Math.random());
+            if(Math.random() > 0.5) { leftObj.position.set(-3.5, -4, 0); rightObj.position.set(3.5, -4, 0); } else { rightObj.position.set(-3.5, -4, 0); leftObj.position.set(3.5, -4, 0); }
+            leftObj.rotation.y = 0.2; leftObj.userData.origRot = 0.2; rightObj.rotation.y = -0.2; rightObj.userData.origRot = -0.2;
+            scene.add(leftObj); scene.add(rightObj); state.objects.push(leftObj, rightObj);
+            leftObj.scale.set(0,0,0); rightObj.scale.set(0,0,0); let s = 0;
+            const grow = () => { s += 0.05; if(s<=1) { leftObj.scale.set(s,s,s); rightObj.scale.set(s,s,s); if(s > 0.5 && s < 0.56) playSound('pop'); requestAnimationFrame(grow); } else { state.canInteract = true; } }; grow();
+            updateHUD();
+        }
+
+        function updateHUD() {
+            document.getElementById('score-display').innerText = '₱' + state.score.toLocaleString();
+            if (state.level <= 2) { document.getElementById('level-display').innerText = `Training ${state.level}/2`; }
+            else { const day = state.level - 2; const totalDays = state.maxLevels - 2; document.getElementById('level-display').innerText = `Day ${day} of ${totalDays}`; }
+        }
+        // Updated Game Over / Donation Logic
+        async function gameOver() {
+            const screen = document.getElementById('overlay-screen');
+            const content = document.getElementById('overlay-content');
+            
+            // Clear current overlay content to prepare for animation
+            content.innerHTML = '<div id="lighting-container" class="flex flex-col items-center justify-center h-full w-full"></div>';
+            screen.style.display = 'flex';
+            
+            // 1. Street Lighting Sequence
+            const lightingContainer = document.getElementById('lighting-container');
+            lightingContainer.innerHTML = `
+                <h2 class="text-3xl text-yellow-200 mb-2 font-bold animate-pulse text-center z-10 drop-shadow-md">LIGHTING UP THE PHILIPPINES</h2>
+                <p class="text-white text-lg mb-8 z-10 drop-shadow-md">Bringing light to far-flung communities...</p>
+                
+                <div class="relative w-full max-w-md aspect-[3/4] mx-auto scale-110">
+                    <!-- Map SVG -->
+                    <svg viewBox="0 0 300 400" class="w-full h-full drop-shadow-2xl" style="filter: drop-shadow(0 0 10px rgba(255,255,255,0.1));">
+                        <!-- Luzon -->
+                        <path d="M140,20 L160,20 L170,50 L180,90 L200,120 L160,150 L120,130 L100,100 L110,50 Z" fill="#374151" stroke="#4b5563" stroke-width="2" />
+                        <!-- Visayas -->
+                        <path d="M150,170 L190,160 L210,190 L170,210 L140,200 Z" fill="#374151" stroke="#4b5563" stroke-width="2" />
+                        <!-- Mindanao -->
+                        <path d="M150,230 L210,220 L230,270 L180,310 L130,290 L120,250 Z" fill="#374151" stroke="#4b5563" stroke-width="2" />
+                        <!-- Palawan -->
+                        <path d="M60,160 L80,150 L100,200 L80,210 Z" fill="#374151" stroke="#4b5563" stroke-width="2" />
+                    </svg>
+                    
+                    <!-- House Container -->
+                    <div id="map-houses" class="absolute inset-0"></div>
+                </div>
+            `;
+            const mapHouses = document.getElementById('map-houses');
+            
+            // Coordinates for houses on the map (approx % left, % top)
+            const houseCoords = [
+                {l: 45, t: 15}, // North Luzon
+                {l: 50, t: 30}, // Central Luzon
+                {l: 40, t: 35}, // Manila/South Luzon
+                {l: 60, t: 38}, // Bicol
+                {l: 25, t: 45}, // Palawan
+                {l: 55, t: 50}, // Visayas 1
+                {l: 60, t: 70}, // Mindanao 1
+                {l: 45, t: 75}  // Mindanao 2
+            ];
+
+            // Animate lighting up
+            const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25]; // C Major
+            for(let i=0; i<8; i++) {
+                await new Promise(r => setTimeout(r, 400));
+                
+                const h = document.createElement('div');
+                h.className = 'absolute text-4xl transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300 scale-0';
+                h.innerHTML = '🏠';
+                h.style.left = houseCoords[i].l + '%';
+                h.style.top = houseCoords[i].t + '%';
+                mapHouses.appendChild(h);
+
+                // Trigger reflow
+                h.offsetWidth; 
+
+                h.classList.remove('scale-0');
+                h.classList.add('text-yellow-400', 'scale-150'); // Pop effect
+                h.style.filter = "drop-shadow(0 0 15px rgba(250, 204, 21, 1))";
+                
+                playNote(notes[i]);
+                setTimeout(() => h.classList.remove('scale-150'), 200);
+            }
+
+            // Confetti
+            fireConfetti();
+            await new Promise(r => setTimeout(r, 1000));
+
+            // 2. Prepare Report Data
+            const salary = state.score;
+            const donationBudget = Math.floor(salary * 0.25);
+            const emergencyLights = Math.floor(donationBudget / 500); 
+            const remainingBudget = donationBudget % 500;
+            const flashlights = Math.floor(remainingBudget / 250); 
+            const housesLit = emergencyLights;
+
+            // 3. Build Report HTML (Hidden initially)
+            const reportHTML = `
+                <div class="flex flex-col items-center max-w-4xl w-full fade-in-up">
+                    <h1 class="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 mb-6 drop-shadow-lg text-center">PAYDAY & IMPACT REPORT</h1>
+                    
+                    <div id="report-item-1" class="opacity-0 translate-y-4 transition-all duration-500 text-white text-center w-full mb-4">
+                        <p class="text-xl text-gray-300">Total Earnings:</p>
+                        <div class="text-5xl font-black text-green-400">₱${salary.toLocaleString()}</div>
+                    </div>
+                    
+                    <div id="report-item-2" class="opacity-0 translate-y-4 transition-all duration-500 bg-blue-900 bg-opacity-60 p-3 rounded-lg mb-6 border border-blue-500 px-6">
+                        <p class="text-xs uppercase tracking-wide text-blue-300 font-bold mb-1">Donation Budget (25%)</p>
+                        <p class="text-2xl font-bold text-white">₱${donationBudget.toLocaleString()}</p>
+                    </div>
+
+                    <div id="report-item-3" class="opacity-0 translate-y-4 transition-all duration-500 flex flex-col items-center mb-6 bg-gray-800 p-6 rounded-xl border border-gray-600 w-full max-w-lg">
+                        <div class="text-gray-300 text-sm uppercase font-bold mb-4 tracking-widest border-b border-gray-600 pb-2 w-full text-center">You Donated:</div>
+                        <div class="flex flex-col md:flex-row justify-center items-center gap-8 w-full">
+                            <div class="flex flex-col items-center">
+                                <span class="text-4xl mb-1">🚨</span>
+                                <span class="text-3xl font-bold text-yellow-400">${emergencyLights}</span>
+                                <span class="text-xs uppercase text-gray-400">Solar Lamps</span>
+                            </div>
+                            <div class="w-full h-px md:w-px md:h-16 bg-gray-600"></div>
+                            <div class="flex flex-col items-center">
+                                <span class="text-4xl mb-1">🔦</span>
+                                <span class="text-3xl font-bold text-blue-400">${flashlights}</span>
+                                <span class="text-xs uppercase text-gray-400">Flashlights</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="report-item-4" class="opacity-0 translate-y-4 transition-all duration-500 bg-indigo-900 bg-opacity-80 p-4 rounded-xl border-2 border-indigo-500 mb-6 w-full max-w-lg shadow-xl transform scale-105">
+                         <div class="text-indigo-200 text-xs uppercase font-bold mb-2 tracking-widest">Immediate Impact</div>
+                         <div class="flex justify-center items-center gap-4">
+                            <span class="text-6xl">🏠</span>
+                            <div class="text-left">
+                                <div class="text-5xl font-black text-white leading-none">${housesLit}</div>
+                                <div class="text-lg text-yellow-300 font-bold">Houses Lit Up</div>
+                            </div>
+                         </div>
+                    </div>
+
+                    <div id="report-item-5" class="opacity-0 translate-y-4 transition-all duration-500 grid grid-cols-2 gap-4 mb-6 w-full max-w-lg">
+                        <div class="bg-indigo-900 bg-opacity-60 p-3 rounded-xl border border-indigo-500 text-center">
+                            <div class="text-indigo-200 text-xs font-bold mb-1">6 Months</div>
+                            <div class="text-2xl font-black text-white">${(housesLit * 6).toLocaleString()}</div> <!-- Simplified projection logic -->
+                            <div class="text-xs text-blue-300">Est. Impact</div>
+                        </div>
+                        <div class="bg-indigo-900 bg-opacity-60 p-3 rounded-xl border border-indigo-500 text-center">
+                            <div class="text-indigo-200 text-xs font-bold mb-1">1 Year</div>
+                            <div class="text-2xl font-black text-white">${(housesLit * 12).toLocaleString()}</div>
+                            <div class="text-xs text-green-300">Est. Impact</div>
+                        </div>
+                    </div>
+
+                    <button id="final-btn" class="opacity-0 transition-opacity duration-1000 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-12 rounded-full text-xl shadow-lg border-2 border-green-400">
+                        FINISH
+                    </button>
+                </div>
+            `;
+            
+            content.innerHTML = reportHTML;
+
+            // 4. Sequential Reveal
+            const items = [1, 2, 3, 4, 5];
+            for (const id of items) {
+                await new Promise(r => setTimeout(r, 600));
+                const el = document.getElementById(`report-item-${id}`);
+                el.classList.remove('opacity-0', 'translate-y-4');
+                playSound('ching');
+            }
+
+            await new Promise(r => setTimeout(r, 500));
+            const btn = document.getElementById('final-btn');
+            btn.classList.remove('opacity-0');
+            btn.addEventListener('click', () => { 
+                window.parent.postMessage("complete", "*");
+                state.level = 0; 
+                startGame(); 
+            });
+        }
+
+        function handleResize() {
+            camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight);
+            const aspect = window.innerWidth / window.innerHeight;
+            if (aspect < 1) { camera.position.set(0, 7, 20); camera.lookAt(0, -1, 0); } 
+            else if (aspect < 1.5) { camera.position.set(0, 6, 16); camera.lookAt(0, -1.5, 0); } 
+            else { camera.position.set(0, 5, 12); camera.lookAt(0, -2, 0); }
+        }
+
+        window.addEventListener('resize', handleResize); handleResize();
+        window.addEventListener('click', onMouseClick);
+        document.getElementById('action-btn').addEventListener('click', startGame);
+        document.getElementById('next-level-btn').addEventListener('click', nextLevel);
+        document.getElementById('start-job-btn').addEventListener('click', () => { document.getElementById('transition-screen').style.display = 'none'; updateHUD(); loadLevel(); });
+        function animate() { requestAnimationFrame(animate); if(state.isPlaying && state.objects.length) { const t = Date.now() * 0.001; state.objects.forEach((o, i) => { o.position.y = -4 + Math.sin(t + i)*0.1; }); } renderer.render(scene, camera); }
+        animate();
+    </script>
+</body>
+</html>
